@@ -18,35 +18,62 @@ from io import BytesIO
 
 from fpdf import FPDF
 import base64
+import jwt
+from datetime import datetime, timedelta
+import extra_streamlit_components as stx
 
 __version__ = "1.1.0"
+
+# Add these lines for debugging
+print("API Key from secrets:", st.secrets.get("OPENAI_API_KEY"))
+print("API Key from env:", os.getenv("OPENAI_API_KEY"))
 
 # Authentication Utilities
 def validate_email(username: str) -> bool:
     """Validates that the username contains an @ symbol, indicating it's an email."""
     return "@" in username
 
-def login_success(message: str, username: str) -> None:
-    st.success(message)
-    st.session_state["authenticated"] = True
-    st.session_state["username"] = username
-    st.rerun()  # Force immediate rerun to update UI
-
-# An argon2 version of my previous functions that used bcrypt
 class Authenticator(argon2.PasswordHasher):
-    """A class derived from argon2.PasswordHasher to provide functionality for the authentication process"""
-
     def generate_pwd_hash(self, password: str):
-        """Generates a hashed version of the provided password using argon2."""
-        return password if password.startswith("$argon2id$") else self.hash(password)
+        return self.hash(password)
 
     def verify_password(self, hashed_password, plain_password):
-        """Verifies if a plaintext password matches a hashed one using argon2."""
         try:
-            if self.verify(hashed_password, plain_password):
-                return True
+            return self.verify(hashed_password, plain_password)
         except argon2.exceptions.VerificationError:
             return False
+
+def create_jwt_token(username: str, expiration_days: int = 30) -> str:
+    expiration = datetime.utcnow() + timedelta(days=expiration_days)
+    payload = {
+        "sub": username,
+        "exp": expiration
+    }
+    return jwt.encode(payload, st.secrets["JWT_SECRET"], algorithm="HS256")
+
+def verify_jwt_token(token: str) -> tuple[bool, str | None]:
+    try:
+        payload = jwt.decode(token, st.secrets["JWT_SECRET"], algorithms=["HS256"])
+        return True, payload["sub"]
+    except jwt.ExpiredSignatureError:
+        return False, None
+    except jwt.InvalidTokenError:
+        return False, None
+
+def get_manager():
+    return stx.CookieManager()
+
+cookie_manager = get_manager()
+
+def set_auth_cookie(username: str):
+    token = create_jwt_token(username)
+    cookie_manager.set("auth_token", token, expires_at=datetime.now() + timedelta(days=30))
+
+def get_auth_cookie():
+    return cookie_manager.get("auth_token")
+
+def clear_auth_cookie():
+    cookie_manager.delete("auth_token")
 
 def login_form(
     *,
@@ -54,10 +81,9 @@ def login_form(
     user_tablename: str = "users",
     username_col: str = "username",
     password_col: str = "password",
-    constrain_password: bool = False,  # Password complexity disabled
     create_title: str = "Create new account :baby: ",
     login_title: str = "Login to existing account :prince: ",
-    allow_guest: bool = False,  # Set to False to disable guest login
+    allow_guest: bool = False,
     allow_create: bool = True,
     create_username_label: str = "Create an email username",
     create_username_placeholder: str = None,
@@ -76,125 +102,67 @@ def login_form(
     login_submit_label: str = "Login",
     login_success_message: str = "Login succeeded :tada:",
     login_error_message: str = "Wrong username/password :x: ",
-    email_check_fail_message: str = "Please sign up with a valid email address.",
+    email_constraint_fail_message: str = "Please sign up with a valid email address (must contain @).",
 ) -> Client:
-    """Creates a user login form in Streamlit apps.
-
-    Connects to a Supabase DB using SUPABASE_URL and SUPABASE_KEY Streamlit secrets.
-    Sets session_state["authenticated"] to True if the login is successful.
-    Sets session_state["username"] to provided username or new or existing user.
-
-    Returns:
-        Supabase.client: The client instance for performing downstream supabase operations.
-    """
-
-    # Initialize the Supabase connection
     client = st.connection(name="supabase", type=SupabaseConnection)
     auth = Authenticator()
 
-    def rehash_pwd_in_db(password, username) -> str:
-        """A procedure to rehash given password in the db if necessary."""
-        hashed_password = auth.generate_pwd_hash(password)
-        client.table(user_tablename).update({password_col: hashed_password}).match(
-            {username_col: username}
-        ).execute()
+    # Check for existing auth token
+    auth_token = get_auth_cookie()
+    if auth_token:
+        is_valid, username = verify_jwt_token(auth_token)
+        if is_valid:
+            st.session_state["authenticated"] = True
+            st.session_state["username"] = username
+            return client
 
-        return hashed_password
+    with st.expander(title, expanded=True):
+        if allow_create:
+            create_tab, login_tab = st.tabs([create_title, login_title])
+        else:
+            login_tab = st.container()
 
-    # User Authentication
-    if "authenticated" not in st.session_state:
-        st.session_state["authenticated"] = False
-
-    if "username" not in st.session_state:
-        st.session_state["username"] = None
-
-    # Display authentication form only if not authenticated
-    if not st.session_state["authenticated"]:
-        with st.expander(title, expanded=True):
-            if allow_create:
-                create_tab, login_tab = st.tabs(
-                    [
-                        create_title,
-                        login_title,
-                    ]
-                )
-            else:
-                login_tab = st.container()
-
-            # Create new account
-            if allow_create:
-                with create_tab:
-                    with st.form(key="create"):
-                        username = st.text_input(
-                            label=create_username_label,
-                            placeholder=create_username_placeholder,
-                            help=create_username_help,
-                        )
-
-                        password = st.text_input(
-                            label=create_password_label,
-                            placeholder=create_password_placeholder,
-                            help=create_password_help,
-                            type="password",
-                        )
-                        hashed_password = auth.generate_pwd_hash(password)
-
-                        if st.form_submit_button(label=create_submit_label, type="primary"):
-                            if not validate_email(username):
-                                st.error(email_check_fail_message)
-                                st.stop()
-
+        if allow_create:
+            with create_tab:
+                with st.form(key="create"):
+                    username = st.text_input(label=create_username_label, placeholder=create_username_placeholder, help=create_username_help)
+                    password = st.text_input(label=create_password_label, placeholder=create_password_placeholder, help=create_password_help, type="password")
+                    if st.form_submit_button(label=create_submit_label, type="primary"):
+                        if "@" not in username:
+                            st.error(email_constraint_fail_message)
+                        else:
+                            hashed_password = auth.generate_pwd_hash(password)
                             try:
-                                client.table(user_tablename).insert(
-                                    {username_col: username, password_col: hashed_password}
-                                ).execute()
+                                client.table(user_tablename).insert({username_col: username, password_col: hashed_password}).execute()
+                                set_auth_cookie(username)
+                                st.success(create_success_message)
+                                st.session_state["authenticated"] = True
+                                st.session_state["username"] = username
+                                st.rerun()
                             except Exception as e:
-                                st.error(e.message)
-                            else:
-                                login_success(create_success_message, username)
+                                st.error(str(e))
 
-            # Login to existing account
-            with login_tab:
-                with st.form(key="login"):
-                    username = st.text_input(
-                        label=login_username_label,
-                        placeholder=login_username_placeholder,
-                        help=login_username_help,
-                    )
-
-                    password = st.text_input(
-                        label=login_password_label,
-                        placeholder=login_password_placeholder,
-                        help=login_password_help,
-                        type="password",
-                    )
-
-                    if st.form_submit_button(label=login_submit_label, type="primary"):
-                        response = (
-                            client.table(user_tablename)
-                            .select(f"{username_col}, {password_col}")
-                            .eq(username_col, username)
-                            .execute()
-                        )
-
-                        if len(response.data) > 0:
-                            db_password = response.data[0]["password"]
-
-                            if not db_password.startswith("$argon2id$"):
-                                # Hash plaintext password and update the db
-                                db_password = rehash_pwd_in_db(db_password, username)
-
+        with login_tab:
+            with st.form(key="login"):
+                username = st.text_input(label=login_username_label, placeholder=login_username_placeholder, help=login_username_help)
+                password = st.text_input(label=login_password_label, placeholder=login_password_placeholder, help=login_password_help, type="password")
+                if st.form_submit_button(label=login_submit_label, type="primary"):
+                    try:
+                        response = client.table(user_tablename).select(f"{username_col}, {password_col}").eq(username_col, username).execute()
+                        if response.data:
+                            db_password = response.data[0][password_col]
                             if auth.verify_password(db_password, password):
-                                # Verify hashed password
-                                login_success(login_success_message, username)
-                                # This step is recommended by the argon2-cffi documentation
-                                if auth.check_needs_rehash(db_password):
-                                    _ = rehash_pwd_in_db(password, username)
+                                set_auth_cookie(username)
+                                st.success(login_success_message)
+                                st.session_state["authenticated"] = True
+                                st.session_state["username"] = username
+                                st.rerun()
                             else:
                                 st.error(login_error_message)
-
                         else:
-                            st.error(login_error_message)
+                            st.error("User not found")
+                    except Exception as e:
+                        st.error(f"Login error: {str(e)}")
 
     return client
 
@@ -227,7 +195,11 @@ def extract_text_from_pdf(pdf_file):
         text += page.extract_text() + "\n"
     return text
 
-def summarize_text(text, api_key=st.secrets["OPENAI_API_KEY"]):
+def summarize_text(text, api_key=None):
+    if api_key is None:
+        api_key = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
+    print("API Key used in summarize_text:", api_key)  # Add this line for debugging
+    client = OpenAI(api_key=api_key)
     prompt = (
         "Please summarize the following text to be concise and to the point:\n\n" + text
     )
@@ -251,33 +223,55 @@ def chunk_text(text, max_tokens=3000):
         chunks.append(chunk)
     return chunks
 
-def generate_mc_questions(content_text, api_key=st.secrets["OPENAI_API_KEY"]):
+def generate_mc_questions(content_text, api_key=st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")):
     prompt = (
-        "You are a professor in the field of Computational System Biology and should create an exam on the topic of the Input PDF. "
-        "Using the attached lecture slides (please analyze thoroughly), create a Master-level multiple-choice exam. The exam should contain multiple-choice and single-choice questions, "
-        "appropriately marked so that students know how many options to select. Create 30 realistic exam questions covering the entire content. Provide the output in JSON format. "
-        "The JSON should have the structure: [{'question': '...', 'choices': ['...'], 'correct_answer': '...', 'explanation': '...'}, ...]. Ensure the JSON is valid and properly formatted."
+        "Based on the following content from a PDF, create a comprehensive multiple-choice exam. "
+        "The exam should contain both multiple-choice and single-choice questions, "
+        "clearly indicating which type each question is. Create 10 realistic exam questions covering the key points of the content. "
+        "Provide the output in JSON format with the following structure: "
+        "[{'question': '...', 'choices': ['...'], 'correct_answer': '...', 'explanation': '...'}, ...]. "
+        "Ensure the JSON is valid and properly formatted."
     )
     messages = [
-        {"role": "user", "content": content_text},
-        {"role": "user", "content": prompt},
+        {"role": "system", "content": "You are an expert exam creator, capable of generating high-quality multiple-choice questions based on provided content."},
+        {"role": "user", "content": f"Content: {content_text}\n\n{prompt}"}
     ]
-    response = stream_llm_response(messages, model_params={"model": "gpt-4o-mini", "temperature": 0.3}, api_key=api_key)
-    return response
+    client = OpenAI(api_key=api_key)
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=messages,
+        temperature=0.7,
+        max_tokens=4000
+    )
+    return parse_generated_questions(response.choices[0].message.content)
 
 def parse_generated_questions(response):
     try:
+        # Try to find JSON in the response
         json_start = response.find('[')
         json_end = response.rfind(']') + 1
+        if json_start == -1 or json_end == 0:
+            raise ValueError("No JSON found in the response")
         json_str = response[json_start:json_end]
 
         questions = json.loads(json_str)
+        
+        # Validate the structure of each question
+        for q in questions:
+            if not all(key in q for key in ('question', 'choices', 'correct_answer', 'explanation')):
+                raise ValueError(f"Invalid question structure: {q}")
+        
         return questions
     except json.JSONDecodeError as e:
         st.error(f"JSON parsing error: {e}")
-        st.error("Response from OpenAI:")
-        st.text(response)
-        return None
+    except ValueError as e:
+        st.error(f"Validation error: {e}")
+    except Exception as e:
+        st.error(f"Unexpected error: {e}")
+    
+    st.error("Response from OpenAI:")
+    st.text(response)
+    return None
 
 def get_question(index, questions):
     return questions[index]
@@ -330,10 +324,9 @@ def generate_pdf(questions):
 
 # Integration with the main app
 def main():
-    # Authentication check
     client = login_form()
-    
-    if st.session_state["authenticated"]:
+
+    if st.session_state.get("authenticated", False):
         # Initialize app_mode if it doesn't exist
         if "app_mode" not in st.session_state:
             st.session_state.app_mode = "Upload PDF & Generate Questions"
@@ -342,7 +335,7 @@ def main():
         dotenv.load_dotenv()
 
         # Load your OpenAI API key from the environment variable
-        OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]  # Use secrets, when using streamlit
+        OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
 
         openai_models = [
             "gpt-4o-mini",
@@ -364,32 +357,17 @@ def main():
         st.sidebar.video("https://youtu.be/zE3ToJLLSIY")
         st.sidebar.info(
             """
-            **SmartExam Creator** is an innovative tool designed to help students and educators alike. 
-            Upload your lecture notes or handwritten notes to create personalized multiple-choice exams.
-            
-            **Story:**
-            This app was developed with the vision of making exam preparation easier and more interactive for students. 
-            Leveraging the power new AI models, it aims to transform traditional study methods into a more engaging and 
-            efficient process. Whether you're a student looking to test your knowledge or an educator seeking to create 
-            customized exams, SmartExam Creator is here to help.
-
-            **What makes SmartExam special ?**
-            Apart from other platforms that require costly subscriptions, this platform is designed from a STEM student
-            for all other students, but let us be honest, we do not have money for Subscriptions. That is why it is completely free for now.
-            I have designed the app as cost efficient as possible, so I can cover all business costs that are coming.  
-            
-            **Features:**
-            - Upload PDF documents
-            - Generate multiple-choice questions
-            - Take interactive quizzes
-            - Download generated exams as PDF
-
-            Built with ❤️ using OpenAI's GPT-4o-mini.
-
-            **Connect with me on [LinkedIn](https://www.linkedin.com/in/laurin-herbst/).**
+            ... (keep the existing info content)
             """
         )
-        
+
+        # Add logout button
+        if st.sidebar.button("Logout"):
+            st.session_state["authenticated"] = False
+            st.session_state["username"] = None
+            clear_auth_cookie()
+            st.rerun()
+
         if st.session_state.app_mode == "Upload PDF & Generate Questions":
             pdf_upload_app()
         elif st.session_state.app_mode == "Take the Quiz":
@@ -403,11 +381,12 @@ def main():
         elif st.session_state.app_mode == "Download as PDF":
             download_pdf_app()
 
+    else:
+        st.warning("Please log in to access the application.")
+
 def pdf_upload_app():
     st.title("Upload Your Lecture - Create Your Test Exam")
     st.subheader("Show Us the Slides and We do the Rest")
-
-    content_text = ""
 
     # Reset session state when uploading a new PDF
     if 'messages' not in st.session_state:
@@ -417,86 +396,100 @@ def pdf_upload_app():
     if uploaded_pdf:
         reset_quiz_state()  # Reset session state when a new PDF is uploaded
         pdf_text = extract_text_from_pdf(uploaded_pdf)
-        content_text += pdf_text
-        st.success("PDF content added to the session.")
-    
-    if len(content_text) > 3000:
-        content_text = summarize_text(content_text)
+        st.success("PDF content extracted successfully.")
 
-    if content_text:
-        st.info("Generating the exam from the uploaded content. It will take just a minute...")
-        chunks = chunk_text(content_text)
-        questions = []
-        for chunk in chunks:
-            response = generate_mc_questions(chunk)
-            parsed_questions = parse_generated_questions(response)
-            if parsed_questions:
-                questions.extend(parsed_questions)
-        if questions:
-            # Initialize session state for the new quiz
-            st.session_state.generated_questions = questions
-            st.session_state.answers = [None] * len(questions)
-            st.session_state.feedback = [None] * len(questions)
-            st.session_state.correct_answers = 0
-            st.session_state.mc_test_generated = True
-            st.success("The game has been successfully created! Switching to the quiz mode...")
+        if pdf_text:
+            st.info("Generating the exam from the uploaded content. This may take a few minutes...")
+            questions = generate_mc_questions(pdf_text)
+            if questions and isinstance(questions, list):
+                # Initialize session state for the new quiz
+                st.session_state.generated_questions = questions
+                st.session_state.answers = [None] * len(questions)
+                st.session_state.feedback = [None] * len(questions)
+                st.session_state.correct_answers = 0
+                st.session_state.mc_test_generated = True
+                st.success("The exam has been successfully created! Switching to the quiz mode...")
 
-            # Automatically switch to "Take the Quiz" mode and rerun
-            st.session_state.app_mode = "Take the Quiz"
-            st.rerun()
-            
+                # Automatically switch to "Take the Quiz" mode and rerun
+                st.session_state.app_mode = "Take the Quiz"
+                st.rerun()
+            else:
+                st.error("Failed to generate valid questions. Please try uploading the PDF again.")
         else:
-            st.error("Failed to parse the generated questions. Please check the OpenAI response.")
+            st.error("Failed to extract text from the PDF. Please ensure the PDF contains extractable text.")
     else:
         st.warning("Please upload a PDF to generate the interactive exam.")
 
-
-def submit_answer(i, quiz_data):
-    user_choice = st.session_state[f"user_choice_{i}"]
-    st.session_state.answers[i] = user_choice
-    if user_choice == quiz_data['correct_answer']:
-        st.session_state.feedback[i] = ("Correct", quiz_data.get('explanation', 'No explanation available'))
-        st.session_state.correct_answers += 1
-    else:
-        st.session_state.feedback[i] = ("Incorrect", quiz_data.get('explanation', 'No explanation available'), quiz_data['correct_answer'])
-
 def mc_quiz_app():
-    st.title('Multiple Choice Game')
-    st.subheader('Here is always one correct answer per question')
+    st.title('Multiple Choice Quiz')
+
+    # Initialize session state variables
+    if 'quiz_submitted' not in st.session_state:
+        st.session_state.quiz_submitted = False
+    if 'answers' not in st.session_state:
+        st.session_state.answers = []
+    if 'feedback' not in st.session_state:
+        st.session_state.feedback = []
+    if 'correct_answers' not in st.session_state:
+        st.session_state.correct_answers = 0
 
     questions = st.session_state.generated_questions
 
-    if questions:
-        if 'answers' not in st.session_state:
+    if questions and isinstance(questions, list):
+        # Ensure answers and feedback lists match the number of questions
+        if len(st.session_state.answers) != len(questions):
             st.session_state.answers = [None] * len(questions)
+        if len(st.session_state.feedback) != len(questions):
             st.session_state.feedback = [None] * len(questions)
-            st.session_state.correct_answers = 0
 
-        for i, quiz_data in enumerate(questions):
-            st.markdown(f"### Question {i+1}: {quiz_data['question']}")
+        if not st.session_state.quiz_submitted:
+            st.subheader('Select your answers for all questions, then submit to see your results')
+            for i, quiz_data in enumerate(questions):
+                if isinstance(quiz_data, dict) and 'question' in quiz_data:
+                    st.markdown(f"### Question {i+1}: {quiz_data['question']}")
+                    user_choice = st.radio("Choose an answer:", quiz_data['choices'], key=f"user_choice_{i}")
+                    st.session_state.answers[i] = user_choice
 
-            if st.session_state.answers[i] is None:
-                user_choice = st.radio("Choose an answer:", quiz_data['choices'], key=f"user_choice_{i}")
-                st.button(f"Submit your answer {i+1}", key=f"submit_{i}", on_click=submit_answer, args=(i, quiz_data))
-            else:
-                selected_index = quiz_data['choices'].index(st.session_state.answers[i]) if st.session_state.answers[i] in quiz_data['choices'] else 0
-                st.radio("Choose an answer:", quiz_data['choices'], key=f"user_choice_{i}", index=selected_index, disabled=True)
+            if st.button("Submit Quiz"):
+                st.session_state.quiz_submitted = True
+                st.session_state.correct_answers = 0
+                for i, (answer, quiz_data) in enumerate(zip(st.session_state.answers, questions)):
+                    if answer == quiz_data['correct_answer']:
+                        st.session_state.feedback[i] = ("Correct", quiz_data.get('explanation', 'No explanation available'))
+                        st.session_state.correct_answers += 1
+                    else:
+                        st.session_state.feedback[i] = ("Incorrect", quiz_data.get('explanation', 'No explanation available'), quiz_data['correct_answer'])
+                st.rerun()
 
-                if st.session_state.feedback[i][0] == "Correct":
-                    st.success(st.session_state.feedback[i][0])
+        else:
+            st.markdown("## Quiz Results")
+            for i, (quiz_data, feedback) in enumerate(zip(questions, st.session_state.feedback)):
+                st.markdown(f"### Question {i+1}: {quiz_data['question']}")
+                if feedback[0] == "Correct":
+                    st.success(f"{feedback[0]}")
                 else:
-                    st.error(f"{st.session_state.feedback[i][0]} - Correct answer: {st.session_state.feedback[i][2]}")
-                st.markdown(f"Explanation: {st.session_state.feedback[i][1]}")
+                    st.error(f"{feedback[0]} - Correct answer: {feedback[2]}")
+                st.markdown(f"**Your answer:** {st.session_state.answers[i]}")
+                st.markdown(f"**Explanation:** {feedback[1]}")
+                st.markdown("---")
 
-        if all(answer is not None for answer in st.session_state.answers):
             score = st.session_state.correct_answers
             total_questions = len(questions)
-            st.write(f"""
-                <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh;">
+            st.markdown(f"""
+                <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px;">
                     <h1 style="font-size: 3em; color: gold;">🏆</h1>
                     <h1>Your Score: {score}/{total_questions}</h1>
                 </div>
             """, unsafe_allow_html=True)
+
+            if st.button("Retake Quiz"):
+                st.session_state.answers = [None] * len(questions)
+                st.session_state.feedback = [None] * len(questions)
+                st.session_state.correct_answers = 0
+                st.session_state.quiz_submitted = False
+                st.rerun()
+    else:
+        st.error("No valid questions found. Please generate the exam again.")
 
 def download_pdf_app():
     st.title('Download Your Exam as PDF')
@@ -520,5 +513,5 @@ def download_pdf_app():
             mime="application/pdf"
         )
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

@@ -9,6 +9,9 @@ import random
 import argon2
 from st_supabase_connection import SupabaseConnection
 from supabase import Client
+import jwt
+from datetime import datetime, timedelta
+import extra_streamlit_components as stx
 
 # Page config should be the very first Streamlit command
 st.set_page_config(
@@ -26,16 +29,63 @@ openai_models = [
     "gpt-3.5-turbo-16k", 
 ]
 
+# Authentication Utilities
+def validate_email(username: str) -> bool:
+    """Validates that the username contains an @ symbol, indicating it's an email."""
+    return "@" in username
+
+class Authenticator(argon2.PasswordHasher):
+    def generate_pwd_hash(self, password: str):
+        return self.hash(password)
+
+    def verify_password(self, hashed_password, plain_password):
+        try:
+            return self.verify(hashed_password, plain_password)
+        except argon2.exceptions.VerificationError:
+            return False
+
+def create_jwt_token(username: str, expiration_days: int = 30) -> str:
+    expiration = datetime.utcnow() + timedelta(days=expiration_days)
+    payload = {
+        "sub": username,
+        "exp": expiration
+    }
+    return jwt.encode(payload, st.secrets["JWT_SECRET"], algorithm="HS256")
+
+def verify_jwt_token(token: str) -> tuple[bool, str | None]:
+    try:
+        payload = jwt.decode(token, st.secrets["JWT_SECRET"], algorithms=["HS256"])
+        return True, payload["sub"]
+    except jwt.ExpiredSignatureError:
+        return False, None
+    except jwt.InvalidTokenError:
+        return False, None
+
+def get_manager():
+    return stx.CookieManager()
+
+cookie_manager = get_manager()
+
+def set_auth_cookie(username: str):
+    token = create_jwt_token(username)
+    cookie_manager.set("auth_token", token, expires_at=datetime.now() + timedelta(days=30))
+
+def get_auth_cookie():
+    return cookie_manager.get("auth_token")
+
+def clear_auth_cookie():
+    cookie_manager.delete("auth_token")
+
 # Supabase Login Functionality
 def login_form(
-    * ,
+    *,
     title: str = "Authentication",
     user_tablename: str = "users",
     username_col: str = "username",
     password_col: str = "password",
     create_title: str = "Create new account :baby: ",
     login_title: str = "Login to existing account :prince: ",
-    allow_guest: bool = False,  # Set to False to disable guest login
+    allow_guest: bool = False,
     allow_create: bool = True,
     create_username_label: str = "Create an email username",
     create_username_placeholder: str = None,
@@ -56,109 +106,66 @@ def login_form(
     login_error_message: str = "Wrong username/password :x: ",
     email_constraint_fail_message: str = "Please sign up with a valid email address (must contain @).",
 ) -> Client:
-    """Creates a user login form in Streamlit apps with simpler password criteria and email validation.
-
-    Connects to a Supabase DB using SUPABASE_URL and SUPABASE_KEY Streamlit secrets.
-    Sets session_state["authenticated"] to True if the login is successful.
-    Sets session_state["username"] to provided username or new or existing user.
-
-    Returns:
-        Supabase.client: The client instance for performing downstream supabase operations.
-    """
-    # Initialize the Supabase connection
     client = st.connection(name="supabase", type=SupabaseConnection)
-    auth = argon2.PasswordHasher()
+    auth = Authenticator()
 
-    # User Authentication
-    if "authenticated" not in st.session_state:
-        st.session_state["authenticated"] = False
+    # Check for existing auth token
+    auth_token = get_auth_cookie()
+    if auth_token:
+        is_valid, username = verify_jwt_token(auth_token)
+        if is_valid:
+            st.session_state["authenticated"] = True
+            st.session_state["username"] = username
+            return client
 
-    if "username" not in st.session_state:
-        st.session_state["username"] = None
-
-    # Display authentication form only if not authenticated
-    if not st.session_state["authenticated"]:
+    if not st.session_state.get("authenticated", False):
         with st.expander(title, expanded=True):
             if allow_create:
-                create_tab, login_tab = st.tabs(
-                    [
-                        create_title,
-                        login_title,
-                    ]
-                )
+                create_tab, login_tab = st.tabs([create_title, login_title])
             else:
                 login_tab = st.container()
 
-            # Create new account
             if allow_create:
                 with create_tab:
                     with st.form(key="create"):
-                        username = st.text_input(
-                            label=create_username_label,
-                            placeholder=create_username_placeholder,
-                            help=create_username_help,
-                        )
-
-                        password = st.text_input(
-                            label=create_password_label,
-                            placeholder=create_password_placeholder,
-                            help=create_password_help,
-                            type="password",
-                        )
-                        hashed_password = auth.hash(password)
+                        username = st.text_input(label=create_username_label, placeholder=create_username_placeholder, help=create_username_help)
+                        password = st.text_input(label=create_password_label, placeholder=create_password_placeholder, help=create_password_help, type="password")
                         if st.form_submit_button(label=create_submit_label, type="primary"):
                             if "@" not in username:
                                 st.error(email_constraint_fail_message)
-                                st.stop()
-
-                            try:
-                                client.table(user_tablename).insert(
-                                    {username_col: username, password_col: hashed_password}
-                                ).execute()
-                            except Exception as e:
-                                st.error(e.message)
                             else:
-                                st.session_state["authenticated"] = True
-                                st.session_state["username"] = username
-                                st.success(create_success_message)
-                                st.rerun()
+                                hashed_password = auth.generate_pwd_hash(password)
+                                try:
+                                    client.table(user_tablename).insert({username_col: username, password_col: hashed_password}).execute()
+                                    st.session_state["authenticated"] = True
+                                    st.session_state["username"] = username
+                                    set_auth_cookie(username)
+                                    st.success(create_success_message)
+                                    st.experimental_rerun()
+                                except Exception as e:
+                                    st.error(str(e))
 
-            # Login to existing account
             with login_tab:
                 with st.form(key="login"):
-                    username = st.text_input(
-                        label=login_username_label,
-                        placeholder=login_username_placeholder,
-                        help=login_username_help,
-                    )
-
-                    password = st.text_input(
-                        label=login_password_label,
-                        placeholder=login_password_placeholder,
-                        help=login_password_help,
-                        type="password",
-                    )
-
+                    username = st.text_input(label=login_username_label, placeholder=login_username_placeholder, help=login_username_help)
+                    password = st.text_input(label=login_password_label, placeholder=login_password_placeholder, help=login_password_help, type="password")
                     if st.form_submit_button(label=login_submit_label, type="primary"):
-                        response = (
-                            client.table(user_tablename)
-                            .select(f"{username_col}, {password_col}")
-                            .eq(username_col, username)
-                            .execute()
-                        )
-
-                        if len(response.data) > 0:
-                            db_password = response.data[0]["password"]
-
-                            if auth.verify(db_password, password):
-                                st.session_state["authenticated"] = True
-                                st.session_state["username"] = username
-                                st.success(login_success_message)
-                                st.rerun()
+                        try:
+                            response = client.table(user_tablename).select(f"{username_col}, {password_col}").eq(username_col, username).execute()
+                            if response.data:
+                                db_password = response.data[0][password_col]
+                                if auth.verify_password(db_password, password):
+                                    st.session_state["authenticated"] = True
+                                    st.session_state["username"] = username
+                                    set_auth_cookie(username)
+                                    st.success(login_success_message)
+                                    st.experimental_rerun()
+                                else:
+                                    st.error(login_error_message)
                             else:
-                                st.error(login_error_message)
-                        else:
-                            st.error(login_error_message)
+                                st.error("User not found")
+                        except Exception as e:
+                            st.error(f"Login error: {str(e)}")
 
     return client
 
@@ -195,123 +202,47 @@ def get_image_base64(image_raw):
     return base64.b64encode(img_byte).decode('utf-8')
 
 def main():
-    # Authentication check
     client = login_form()
 
-    if st.session_state["authenticated"]:
-        # --- Header ---
-        st.title("📝 Chat with your Handwritten Notes & Pictures")
+    if st.session_state.get("authenticated", False):
+        # Initialize app_mode if it doesn't exist
+        if "app_mode" not in st.session_state:
+            st.session_state.app_mode = "Upload PDF & Generate Questions"
+        
+        # Main app content
+        dotenv.load_dotenv()
 
-        # --- Main Content ---
-        # Checking if the user has introduced the OpenAI API Key, if not, a warning is displayed
-        openai_api_key = os.getenv("OPENAI_API_KEY")
-        if not openai_api_key:
-            st.warning("Please set your OpenAI API Key to continue...")
-            return
+        # Load your OpenAI API key from the environment variable
+        OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
 
-        client = OpenAI(api_key=openai_api_key)
+        openai_models = [
+            "gpt-4o-mini",
+            "gpt-4-turbo",
+            "gpt-3.5-turbo-16k",
+        ]
 
-        if "messages" not in st.session_state:
-            st.session_state.messages = []
+        st.sidebar.title("SmartExam Creator")
+        
+        app_mode_options = ["Upload PDF & Generate Questions", "Take the Quiz", "Download as PDF"]
+        st.session_state.app_mode = st.sidebar.selectbox(
+            "Choose the app mode", 
+            app_mode_options, 
+            index=app_mode_options.index(st.session_state.app_mode), 
+            key="app_mode_select"
+        )
 
-        # Displaying the previous messages if there are any
-        for message in st.session_state.messages:
-            with st.chat_message(message["role"]):
-                # Ensure content is a list and contains dictionaries with the expected structure
-                if isinstance(message["content"], list):
-                    for content in message["content"]:
-                        # Check if the content is a dictionary and contains the 'type' key
-                        if isinstance(content, dict) and "type" in content:
-                            if content["type"] == "text":
-                                st.write(content["text"])
-                            elif content["type"] == "image_url":      
-                                st.image(content["image_url"]["url"])
-                            elif content["type"] == "video_file":
-                                st.video(content["video_file"])
-                            elif content["type"] == "audio_file":
-                                st.audio(content["audio_file"])
-                        else:
-                            st.error("Unexpected content format encountered.")
-                else:
-                    st.error("Message content is not in the expected format.")
+        # Add logout button
+        if st.sidebar.button("Logout"):
+            st.session_state["authenticated"] = False
+            st.session_state["username"] = None
+            clear_auth_cookie()
+            st.experimental_rerun()
 
-        # Model parameters (fixed)
-        model_params = {
-            "model": "gpt-4o-mini",
-            "temperature": 0.7,
-        }
+        # Rest of your main app logic here
+        # ...
 
-        # --- Image Upload ---
-        st.write(f"### **🖼️ Add an image:**")
-
-        def add_image_to_messages():
-            if st.session_state.uploaded_img or ("camera_img" in st.session_state and st.session_state.camera_img):
-                raw_img = Image.open(st.session_state.uploaded_img or st.session_state.camera_img)
-                img = get_image_base64(raw_img)
-                st.session_state.messages.append({
-                    "role": "user", 
-                    "content": [{
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/jpeg;base64,{img}"}
-                    }]
-                })
-
-        cols_img = st.columns(2)
-
-        with cols_img[0]:
-            st.file_uploader(
-                "Upload an image:", 
-                type=["png", "jpg", "jpeg"], 
-                accept_multiple_files=False,
-                key="uploaded_img",
-                on_change=add_image_to_messages,
-            )
-
-        with cols_img[1]:                    
-            activate_camera = st.checkbox("Activate camera")
-            if activate_camera:
-                st.camera_input(
-                    "Take a picture", 
-                    key="camera_img",
-                    on_change=add_image_to_messages,
-                )
-
-        # --- Chat input ---
-        if prompt := st.chat_input("Hi! Ask me anything..."):
-            st.session_state.messages.append({
-                "role": "user", 
-                "content": [{
-                    "type": "text",
-                    "text": prompt,
-                }]
-            })
-
-            # Display the new messages
-            with st.chat_message("user"):
-                st.markdown(prompt)
-
-            with st.chat_message("assistant"):
-                st.write_stream(
-                    stream_llm_response(
-                        model_params=model_params, 
-                        model_type="openai",
-                        api_key=openai_api_key
-                    )
-                )
-
-        # --- Sidebar --- 
-        with st.sidebar:
-            st.write("### 🛠️ Options")
-            # Reset conversation button
-            def reset_conversation():
-                if "messages" in st.session_state and len(st.session_state.messages) > 0:
-                    st.session_state.pop("messages", None)
-
-            st.button(
-                "🗑️ Reset conversation", 
-                on_click=reset_conversation,
-            )
-
+    else:
+        st.warning("Please log in to access the application.")
 
 if __name__=="__main__":
     main()

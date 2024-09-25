@@ -26,7 +26,9 @@ openai_models = [
 
 # Function to query and stream the response from the LLM
 def stream_llm_response(model_params, api_key=None):
-    response_message = ""
+    if api_key is None:
+        api_key = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
+    print("API Key used in stream_llm_response:", api_key)  # Add this line for debugging
     client = OpenAI(api_key=api_key)
     messages = st.session_state.messages.copy()  # Copy the conversation history
 
@@ -43,6 +45,7 @@ def stream_llm_response(model_params, api_key=None):
                     text_content += content["text"] + "\n"
             api_messages.append({"role": message["role"], "content": text_content})
 
+    response_message = ""
     # Streaming response from the OpenAI API
     for chunk in client.chat.completions.create(
         model=model_params["model"],
@@ -78,7 +81,7 @@ def extract_text_from_pdf(pdf_file):
 
 # Function to display login/signup form using Supabase
 def login_form(
-    * ,
+    *,
     title: str = "Authentication",
     user_tablename: str = "users",
     username_col: str = "username",
@@ -111,59 +114,63 @@ def login_form(
     client = st.connection(name="supabase", type=SupabaseConnection)
     auth = argon2.PasswordHasher()
 
+    # Check if the user is already authenticated
     if "authenticated" not in st.session_state:
         st.session_state["authenticated"] = False
 
     if "username" not in st.session_state:
         st.session_state["username"] = None
 
-    if not st.session_state["authenticated"]:
-        with st.expander(title, expanded=True):
-            if allow_create:
-                create_tab, login_tab = st.tabs([create_title, login_title])
-            else:
-                login_tab = st.container()
+    # If already authenticated, return early
+    if st.session_state["authenticated"]:
+        return client
 
-            if allow_create:
-                with create_tab:
-                    with st.form(key="create"):
-                        username = st.text_input(label=create_username_label, placeholder=create_username_placeholder, help=create_username_help)
-                        password = st.text_input(label=create_password_label, placeholder=create_password_placeholder, help=create_password_help, type="password")
-                        hashed_password = auth.hash(password)
-                        if st.form_submit_button(label=create_submit_label, type="primary"):
-                            if "@" not in username:
-                                st.error(email_constraint_fail_message)
-                                st.stop()
+    with st.expander(title, expanded=True):
+        if allow_create:
+            create_tab, login_tab = st.tabs([create_title, login_title])
+        else:
+            login_tab = st.container()
 
-                            try:
-                                client.table(user_tablename).insert({username_col: username, password_col: hashed_password}).execute()
-                            except Exception as e:
-                                st.error(e.message)
-                            else:
-                                st.session_state["authenticated"] = True
-                                st.session_state["username"] = username
-                                st.success(create_success_message)
-                                st.rerun()
+        if allow_create:
+            with create_tab:
+                with st.form(key="create"):
+                    username = st.text_input(label=create_username_label, placeholder=create_username_placeholder, help=create_username_help)
+                    password = st.text_input(label=create_password_label, placeholder=create_password_placeholder, help=create_password_help, type="password")
+                    hashed_password = auth.hash(password)
+                    if st.form_submit_button(label=create_submit_label, type="primary"):
+                        if "@" not in username:
+                            st.error(email_constraint_fail_message)
+                            st.stop()
 
-            with login_tab:
-                with st.form(key="login"):
-                    username = st.text_input(label=login_username_label, placeholder=login_username_placeholder, help=login_username_help)
-                    password = st.text_input(label=login_password_label, placeholder=login_password_placeholder, help=login_password_help, type="password")
+                        try:
+                            client.table(user_tablename).insert({username_col: username, password_col: hashed_password}).execute()
+                        except Exception as e:
+                            st.error(e.message)
+                        else:
+                            st.session_state["authenticated"] = True
+                            st.session_state["username"] = username
+                            st.success(create_success_message)
+                            st.experimental_rerun()
 
-                    if st.form_submit_button(label=login_submit_label, type="primary"):
-                        response = client.table(user_tablename).select(f"{username_col}, {password_col}").eq(username_col, username).execute()
+        with login_tab:
+            with st.form(key="login"):
+                username = st.text_input(label=login_username_label, placeholder=login_username_placeholder, help=login_username_help)
+                password = st.text_input(label=login_password_label, placeholder=login_password_placeholder, help=login_password_help, type="password")
 
-                        if len(response.data) > 0:
-                            db_password = response.data[0]["password"]
-                            if auth.verify(db_password, password):
-                                st.session_state["authenticated"] = True
-                                st.session_state["username"] = username
-                                st.success(login_success_message)
-                                st.rerun()
-                            else:
-                                st.error(login_error_message)
+                if st.form_submit_button(label=login_submit_label, type="primary"):
+                    response = client.table(user_tablename).select(f"{username_col}, {password_col}").eq(username_col, username).execute()
+
+                    if len(response.data) > 0:
+                        db_password = response.data[0]["password"]
+                        if auth.verify(db_password, password):
+                            st.session_state["authenticated"] = True
+                            st.session_state["username"] = username
+                            st.success(login_success_message)
+                            st.experimental_rerun()
                         else:
                             st.error(login_error_message)
+                    else:
+                        st.error(login_error_message)
 
     return client
 
@@ -247,6 +254,14 @@ def main():
             st.session_state.pdf_text = ""
             st.session_state.pdf_uploaded = False
             st.success("Conversation has been reset.")
+
+        # --- Logout ---
+        if st.sidebar.button("Logout"):
+            st.session_state["authenticated"] = False
+            st.session_state["username"] = None
+            st.experimental_rerun()
+    else:
+        st.warning("Please log in to access the application.")
 
 if __name__ == "__main__":
     main()

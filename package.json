@@ -1,0 +1,12 @@
+{
+  "name": "smartexam",
+  "version": "1.0.0",
+  "description": "This is a LLM app, using Streamlit and connecting to the GPT-4o-mini api to create interactive quizzes, based on university lectures. A login form is integrated and connected to a Supabase database.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}
