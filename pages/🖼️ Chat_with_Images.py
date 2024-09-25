@@ -13,6 +13,7 @@ import jwt
 from datetime import datetime, timedelta
 import extra_streamlit_components as stx
 from BEST_PDF_STUDY_APP import logout
+from BEST_PDF_STUDY_APP import Authenticator
 
 # Page config should be the very first Streamlit command
 st.set_page_config(
@@ -34,16 +35,6 @@ openai_models = [
 def validate_email(username: str) -> bool:
     """Validates that the username contains an @ symbol, indicating it's an email."""
     return "@" in username
-
-class Authenticator(argon2.PasswordHasher):
-    def generate_pwd_hash(self, password: str):
-        return self.hash(password)
-
-    def verify_password(self, hashed_password, plain_password):
-        try:
-            return self.verify(hashed_password, plain_password)
-        except argon2.exceptions.VerificationError:
-            return False
 
 def create_jwt_token(username: str, expiration_days: int = 30) -> str:
     expiration = datetime.utcnow() + timedelta(days=expiration_days)
@@ -142,7 +133,7 @@ def login_form(
                                     st.session_state["username"] = username
                                     set_auth_cookie(username)
                                     st.success(create_success_message)
-                                    st.experimental_rerun()
+                                    st.rerun()
                                 except Exception as e:
                                     st.error(str(e))
 
@@ -160,13 +151,13 @@ def login_form(
                                     st.session_state["username"] = username
                                     set_auth_cookie(username)
                                     st.success(login_success_message)
-                                    st.experimental_rerun()
+                                    st.rerun()
                                 else:
                                     st.error(login_error_message)
                             else:
                                 st.error("User not found")
                         except Exception as e:
-                            
+                            st.error(f"Login error: {str(e)}")
 
     return client
 
