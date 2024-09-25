@@ -168,10 +168,10 @@ def login_form(
     return client
 
 def logout():
-    st.session_state["authenticated"] = False
-    st.session_state["username"] = None
+    st.session_state.authenticated = False
+    st.session_state.username = None
     clear_auth_cookie()
-    st.rerun()
+    
 
 # Function to reset quiz state when a new exam is uploaded
 def reset_quiz_state():
@@ -330,21 +330,25 @@ def generate_pdf(questions):
 
 # Integration with the main app
 def main():
-    if not st.session_state.get("authenticated", False):
-        client = login_form()
+    if "authenticated" not in st.session_state:
+        st.session_state.authenticated = False
 
-    if st.session_state.get("authenticated", False):
-        # Initialize app_mode if it doesn't exist
+    if not st.session_state.authenticated:
+        client = login_form()
+    
+    if st.session_state.authenticated:
+        st.sidebar.title("SmartExam Creator")
+        
+        # Add logout button at the top of the sidebar
+        if st.sidebar.button("Logout", key="logout_button"):
+            logout()
+            st.rerun()
+
+        # Main app content
         if "app_mode" not in st.session_state:
             st.session_state.app_mode = "Upload PDF & Generate Questions"
         
-        if st.sidebar.button("Logout"):
-            logout()
-        
-        # Main app content
         dotenv.load_dotenv()
-
-        # Load your OpenAI API key from the environment variable
         OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
 
         openai_models = [
@@ -353,8 +357,6 @@ def main():
             "gpt-3.5-turbo-16k",
         ]
 
-        st.sidebar.title("SmartExam Creator")
-        
         app_mode_options = ["Upload PDF & Generate Questions", "Take the Quiz", "Download as PDF"]
         st.session_state.app_mode = st.sidebar.selectbox(
             "Choose the app mode", 
@@ -370,10 +372,6 @@ def main():
             ... (keep the existing info content)
             """
         )
-
-        # Add logout button
-        if st.sidebar.button("Logout"):
-            logout()
 
         if st.session_state.app_mode == "Upload PDF & Generate Questions":
             pdf_upload_app()

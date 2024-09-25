@@ -176,10 +176,20 @@ def login_form(
 
 # Main app function
 def main():
-    # Authentication check
-    client = login_form()
+    if "authenticated" not in st.session_state:
+        st.session_state.authenticated = False
 
-    if st.session_state["authenticated"]:
+    if not st.session_state.authenticated:
+        client = login_form()
+    
+    if st.session_state.authenticated:
+        st.sidebar.title("Chat with PDF")
+        
+        # Add logout button at the top of the sidebar
+        if st.sidebar.button("Logout", key="logout_button_pdf"):
+            logout()
+            st.rerun()
+
         # --- Header ---
         st.title("📝Upload Your Study Material - Ask Unlimited Questions")
 
@@ -255,11 +265,6 @@ def main():
             st.session_state.pdf_uploaded = False
             st.success("Conversation has been reset.")
 
-        # --- Logout ---
-        if st.sidebar.button("Logout"):
-            st.session_state["authenticated"] = False
-            st.session_state["username"] = None
-            st.experimental_rerun()
     else:
         st.warning("Please log in to access the application.")
 
