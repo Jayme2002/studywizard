@@ -142,8 +142,7 @@ def login_form(
                                     st.rerun()
                                 except Exception as e:
                                     st.error(str(e))
-
-            with login_tab:
+with login_tab:
     with st.form(key="login"):
         username = st.text_input(label=login_username_label, placeholder=login_username_placeholder, help=login_username_help)
         password = st.text_input(label=login_password_label, placeholder=login_password_placeholder, help=login_password_help, type="password")
