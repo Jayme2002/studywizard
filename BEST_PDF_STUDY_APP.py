@@ -107,13 +107,16 @@ def login_form(
     client = st.connection(name="supabase", type=SupabaseConnection)
     auth = Authenticator()
 
-    if "authenticated" not in st.session_state:
-        st.session_state["authenticated"] = False
+    # Check for existing auth token
+    auth_token = get_auth_cookie()
+    if auth_token:
+        is_valid, username = verify_jwt_token(auth_token)
+        if is_valid:
+            st.session_state["authenticated"] = True
+            st.session_state["username"] = username
+            return client
 
-    if "username" not in st.session_state:
-        st.session_state["username"] = None
-
-    if not st.session_state["authenticated"]:
+    if not st.session_state.get("authenticated", False):
         with st.expander(title, expanded=True):
             if allow_create:
                 create_tab, login_tab = st.tabs([create_title, login_title])
@@ -342,17 +345,8 @@ def main():
             logout()
 
         # Main app content
-        if "app_mode" not in st.session_state:
-            st.session_state.app_mode = "Upload PDF & Generate Questions"
-        
         dotenv.load_dotenv()
         OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
-
-        openai_models = [
-            "gpt-4o-mini",
-            "gpt-4-turbo",
-            "gpt-3.5-turbo-16k",
-        ]
 
         app_mode_options = ["Upload PDF & Generate Questions", "Take the Quiz", "Download as PDF"]
         st.session_state.app_mode = st.sidebar.selectbox(
@@ -366,7 +360,7 @@ def main():
         st.sidebar.video("https://youtu.be/zE3ToJLLSIY")
         st.sidebar.info(
             """
-            ... (keep the existing info content)
+            ... (rest of the info content)
             """
         )
 
