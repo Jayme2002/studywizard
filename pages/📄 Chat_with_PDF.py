@@ -8,6 +8,7 @@ import argon2
 from st_supabase_connection import SupabaseConnection
 from supabase import Client
 from BEST_PDF_STUDY_APP import logout
+from BEST_PDF_STUDY_APP import Authenticator
 
 # Page config should be the very first Streamlit command
 st.set_page_config(
