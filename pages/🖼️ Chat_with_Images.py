@@ -59,9 +59,11 @@ cookie_manager = get_manager()
 
 def set_auth_cookie(username: str):
     token = create_jwt_token(username)
+    cookie_manager = get_manager()
     cookie_manager.set("auth_token", token, expires_at=datetime.now() + timedelta(days=30))
 
 def get_auth_cookie():
+    cookie_manager = get_manager()
     return cookie_manager.get("auth_token")
 
 def clear_auth_cookie():

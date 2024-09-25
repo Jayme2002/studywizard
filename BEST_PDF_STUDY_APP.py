@@ -67,9 +67,11 @@ def get_manager():
 
 def set_auth_cookie(username: str):
     token = create_jwt_token(username)
+    cookie_manager = get_manager()
     cookie_manager.set("auth_token", token, expires_at=datetime.now() + timedelta(days=30))
 
 def get_auth_cookie():
+    cookie_manager = get_manager()
     return cookie_manager.get("auth_token")
 
 def clear_auth_cookie():
@@ -156,8 +158,7 @@ def login_form(
                                 if auth.verify_password(db_password, password):
                                     st.session_state["authenticated"] = True
                                     st.session_state["username"] = username
-                                    cookie_manager = get_manager()
-                                    cookie_manager.set("auth_token", create_jwt_token(username), expires_at=datetime.now() + timedelta(days=30))
+                                    set_auth_cookie(username)
                                     st.success(login_success_message)
                                     st.experimental_rerun()
                                 else:
@@ -176,8 +177,7 @@ def logout():
             del st.session_state[key]
     
     # Clear the authentication cookie
-    cookie_manager = get_manager()
-    cookie_manager.delete("auth_token")
+    clear_auth_cookie()
     
     # Ensure we set authenticated to False
     st.session_state.authenticated = False
@@ -394,8 +394,7 @@ def main():
         st.session_state.app_mode = "Upload PDF & Generate Questions"
 
     # Check for existing auth token
-    cookie_manager = get_manager()
-    auth_token = cookie_manager.get("auth_token")
+    auth_token = get_auth_cookie()
     if auth_token:
         is_valid, username = verify_jwt_token(auth_token)
         if is_valid:
