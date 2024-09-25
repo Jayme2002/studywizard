@@ -338,6 +338,51 @@ def generate_pdf(questions):
     return pdf.output(dest="S").encode("latin1")
 
 # Integration with the main app
+def pdf_upload_app():
+    st.title("Upload PDF & Generate Questions")
+    uploaded_file = st.file_uploader("Choose a PDF file", type="pdf")
+    if uploaded_file is not None:
+        content_text = extract_text_from_pdf(uploaded_file)
+        st.session_state.content_text = content_text
+        st.success("PDF uploaded successfully!")
+        
+        if st.button("Generate Questions"):
+            with st.spinner("Generating questions..."):
+                questions = generate_mc_questions(content_text)
+                st.session_state.generated_questions = questions
+                st.session_state.mc_test_generated = True
+            st.success("Questions generated successfully!")
+
+def mc_quiz_app():
+    st.title("Take the Quiz")
+    if 'generated_questions' in st.session_state and st.session_state.generated_questions:
+        questions = st.session_state.generated_questions
+        for i, q in enumerate(questions):
+            st.subheader(f"Question {i+1}")
+            st.write(q['question'])
+            answer = st.radio("Choose your answer:", q['choices'], key=f"q_{i}")
+            if st.button("Submit", key=f"submit_{i}"):
+                if answer == q['correct_answer']:
+                    st.success("Correct!")
+                else:
+                    st.error(f"Incorrect. The correct answer is: {q['correct_answer']}")
+                st.write(f"Explanation: {q['explanation']}")
+    else:
+        st.warning("No questions generated yet. Please upload a PDF and generate questions first.")
+
+def download_pdf_app():
+    st.title("Download as PDF")
+    if 'generated_questions' in st.session_state and st.session_state.generated_questions:
+        pdf_bytes = generate_pdf(st.session_state.generated_questions)
+        st.download_button(
+            label="Download PDF",
+            data=pdf_bytes,
+            file_name="generated_exam.pdf",
+            mime="application/pdf"
+        )
+    else:
+        st.warning("No questions generated yet. Please upload a PDF and generate questions first.")
+
 def main():
     if "authenticated" not in st.session_state:
         st.session_state.authenticated = False
@@ -376,28 +421,14 @@ def main():
             key="app_mode_select"
         )
         
-        st.sidebar.markdown("## About")
-        st.sidebar.video("https://youtu.be/zE3ToJLLSIY")
-        st.sidebar.info(
-            """
-            ... (rest of the info content)
-            """
-        )
-
         if st.session_state.app_mode == "Upload PDF & Generate Questions":
             pdf_upload_app()
         elif st.session_state.app_mode == "Take the Quiz":
-            if 'mc_test_generated' in st.session_state and st.session_state.mc_test_generated:
-                if 'generated_questions' in st.session_state and st.session_state.generated_questions:
-                    mc_quiz_app()
-                else:
-                    st.warning("No generated questions found. Please upload a PDF and generate questions first.")
-            else:
-                st.warning("Please upload a PDF and generate questions first.")
+            mc_quiz_app()
         elif st.session_state.app_mode == "Download as PDF":
             download_pdf_app()
 
-    if not st.session_state.authenticated:
+    else:
         st.warning("Please log in to access the application.")
 
 if __name__ == "__main__":
