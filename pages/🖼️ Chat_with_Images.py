@@ -12,6 +12,7 @@ from supabase import Client
 import jwt
 from datetime import datetime, timedelta
 import extra_streamlit_components as stx
+from BEST_PDF_STUDY_APP import logout
 
 # Page config should be the very first Streamlit command
 st.set_page_config(
@@ -233,10 +234,7 @@ def main():
 
         # Add logout button
         if st.sidebar.button("Logout"):
-            st.session_state["authenticated"] = False
-            st.session_state["username"] = None
-            clear_auth_cookie()
-            st.experimental_rerun()
+            logout()
 
         # Rest of your main app logic here
         # ...

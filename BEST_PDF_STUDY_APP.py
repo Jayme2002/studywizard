@@ -340,7 +340,7 @@ def main():
         st.sidebar.title("SmartExam Creator")
         
         # Add logout button at the top of the sidebar
-        if st.sidebar.button("Logout", key="logout_button"):
+        if st.sidebar.button("Logout", key="logout_button_main"):
             logout()
 
         # Main app content
