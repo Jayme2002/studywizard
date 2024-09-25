@@ -157,7 +157,7 @@ def login_form(
                                     st.session_state["username"] = username
                                     set_auth_cookie(username)
                                     st.success(login_success_message)
-                                    st.rerun()
+                                    return  # Exit the function after successful login
                                 else:
                                     st.error(login_error_message)
                             else:
@@ -332,13 +332,22 @@ def generate_pdf(questions):
 def main():
     if "authenticated" not in st.session_state:
         st.session_state.authenticated = False
-            
 
     if "app_mode" not in st.session_state:
         st.session_state.app_mode = "Upload PDF & Generate Questions"
 
+    # Check for existing auth token
+    auth_token = get_auth_cookie()
+    if auth_token:
+        is_valid, username = verify_jwt_token(auth_token)
+        if is_valid:
+            st.session_state.authenticated = True
+            st.session_state.username = username
+
     if not st.session_state.authenticated:
         login_form()
+        if st.session_state.authenticated:
+            st.rerun()
     
     if st.session_state.authenticated:
         st.sidebar.title("SmartExam Creator")
@@ -346,6 +355,7 @@ def main():
         # Add logout button at the top of the sidebar
         if st.sidebar.button("Logout", key="logout_button"):
             logout()
+            st.rerun()
 
         # Main app content
         dotenv.load_dotenv()
