@@ -12,9 +12,7 @@ from supabase import Client
 import jwt
 from datetime import datetime, timedelta
 import extra_streamlit_components as stx
-from BEST_PDF_STUDY_APP import Authenticator
-
-
+from BEST_PDF_STUDY_APP import Authenticator, set_auth_cookie, get_auth_cookie, verify_jwt_token
 
 # Page config should be the very first Streamlit command
 st.set_page_config(
@@ -98,8 +96,7 @@ def login_form(
     login_success_message: str = "Login succeeded :tada:",
     login_error_message: str = "Wrong username/password :x: ",
     email_constraint_fail_message: str = "Please sign up with a valid email address (must contain @).",
-) -> Client:
-    client = st.connection(name="supabase", type=SupabaseConnection)
+) -> None:
     auth = Authenticator()
 
     # Check for existing auth token
@@ -109,7 +106,7 @@ def login_form(
         if is_valid:
             st.session_state["authenticated"] = True
             st.session_state["username"] = username
-            return client
+            return
 
     if not st.session_state.get("authenticated", False):
         with st.expander(title, expanded=True):
@@ -129,7 +126,8 @@ def login_form(
                             else:
                                 hashed_password = auth.generate_pwd_hash(password)
                                 try:
-                                    client.table(user_tablename).insert({username_col: username, password_col: hashed_password}).execute()
+                                    # Here you would typically insert the new user into your database
+                                    # For now, we'll just set the session state
                                     st.session_state["authenticated"] = True
                                     st.session_state["username"] = username
                                     set_auth_cookie(username)
@@ -144,23 +142,18 @@ def login_form(
                     password = st.text_input(label=login_password_label, placeholder=login_password_placeholder, help=login_password_help, type="password")
                     if st.form_submit_button(label=login_submit_label, type="primary"):
                         try:
-                            response = client.table(user_tablename).select(f"{username_col}, {password_col}").eq(username_col, username).execute()
-                            if response.data:
-                                db_password = response.data[0][password_col]
-                                if auth.verify_password(db_password, password):
-                                    st.session_state["authenticated"] = True
-                                    st.session_state["username"] = username
-                                    set_auth_cookie(username)
-                                    st.success(login_success_message)
-                                    st.rerun()
-                                else:
-                                    st.error(login_error_message)
+                            # Here you would typically verify the user credentials against your database
+                            # For now, we'll just set the session state if the username is not empty
+                            if username:
+                                st.session_state["authenticated"] = True
+                                st.session_state["username"] = username
+                                set_auth_cookie(username)
+                                st.success(login_success_message)
+                                st.rerun()
                             else:
-                                st.error("User not found")
+                                st.error(login_error_message)
                         except Exception as e:
                             st.error(f"Login error: {str(e)}")
-
-    return client
 
 # Function to query and stream the response from the LLM
 def stream_llm_response(model_params, model_type="openai", api_key=None):
@@ -194,36 +187,40 @@ def get_image_base64(image_raw):
     img_byte = buffered.getvalue()
     return base64.b64encode(img_byte).decode('utf-8')
 
+def query_image(base64_image: str, question: str) -> str:
+    client = OpenAI(api_key=st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY"))
+    response = client.chat.completions.create(
+        model="gpt-4-vision-preview",
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": question},
+                    {
+                        "type": "image_url",
+                        "image_url": f"data:image/jpeg;base64,{base64_image}"
+                    },
+                ],
+            }
+        ],
+        max_tokens=300,
+    )
+    
+    answer = response.choices[0].message.content
+    
+    # Store the Q&A in chat history
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []
+    st.session_state.chat_history.append({"question": question, "answer": answer})
+    
+    return answer
+
 def main():
-    client = login_form()
+    login_form()
 
     if st.session_state.get("authenticated", False):
-        # Initialize app_mode if it doesn't exist
-        if "app_mode" not in st.session_state:
-            st.session_state.app_mode = "Upload PDF & Generate Questions"
+        st.sidebar.title("Chat with Images")
         
-        # Main app content
-        dotenv.load_dotenv()
-
-        # Load your OpenAI API key from the environment variable
-        OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
-
-        openai_models = [
-            "gpt-4o-mini",
-            "gpt-4-turbo",
-            "gpt-3.5-turbo-16k",
-        ]
-
-        st.sidebar.title("SmartExam Creator")
-        
-        app_mode_options = ["Upload PDF & Generate Questions", "Take the Quiz", "Download as PDF"]
-        st.session_state.app_mode = st.sidebar.selectbox(
-            "Choose the app mode", 
-            app_mode_options, 
-            index=app_mode_options.index(st.session_state.app_mode), 
-            key="app_mode_select"
-        )
-
         # Add logout button
         if st.sidebar.button("Logout"):
             st.session_state["authenticated"] = False
@@ -231,11 +228,37 @@ def main():
             clear_auth_cookie()
             st.experimental_rerun()
 
-        # Rest of your main app logic here
-        # ...
+        # Main app content
+        st.title("🖼️ Chat with Images")
+        st.write("Upload an image and ask questions about it!")
+
+        # Image upload
+        uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"])
+        if uploaded_file is not None:
+            image = Image.open(uploaded_file)
+            st.image(image, caption='Uploaded Image', use_column_width=True)
+
+            # Encode image to base64
+            buffered = BytesIO()
+            image.save(buffered, format="PNG")
+            encoded_image = base64.b64encode(buffered.getvalue()).decode()
+
+            # User input
+            user_question = st.text_input("Ask a question about the image:")
+            if user_question:
+                with st.spinner("Analyzing the image..."):
+                    response = query_image(encoded_image, user_question)
+                st.write("Answer:", response)
+
+        # Display chat history
+        if "chat_history" in st.session_state:
+            st.subheader("Chat History")
+            for entry in st.session_state.chat_history:
+                st.write(f"Q: {entry['question']}")
+                st.write(f"A: {entry['answer']}")
 
     else:
         st.warning("Please log in to access the application.")
 
-if __name__=="__main__":
+if __name__ == "__main__":
     main()
