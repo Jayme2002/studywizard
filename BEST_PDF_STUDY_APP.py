@@ -61,9 +61,9 @@ def verify_jwt_token(token: str) -> tuple[bool, str | None]:
         return False, None
 
 def get_manager():
-    return stx.CookieManager()
-
-cookie_manager = get_manager()
+    if "cookie_manager" not in st.session_state:
+        st.session_state.cookie_manager = stx.CookieManager()
+    return st.session_state.cookie_manager
 
 def set_auth_cookie(username: str):
     token = create_jwt_token(username)
@@ -156,9 +156,10 @@ def login_form(
                                 if auth.verify_password(db_password, password):
                                     st.session_state["authenticated"] = True
                                     st.session_state["username"] = username
-                                    set_auth_cookie(username)
+                                    cookie_manager = get_manager()
+                                    cookie_manager.set("auth_token", create_jwt_token(username), expires_at=datetime.now() + timedelta(days=30))
                                     st.success(login_success_message)
-                                    st.rerun()  # Rerun the app after successful login
+                                    st.experimental_rerun()
                                 else:
                                     st.error(login_error_message)
                             else:
@@ -169,18 +170,20 @@ def login_form(
     return client
 
 def logout():
-    # Clear all session state
+    # Clear all session state except for the cookie manager
     for key in list(st.session_state.keys()):
-        del st.session_state[key]
+        if key != "cookie_manager":
+            del st.session_state[key]
     
     # Clear the authentication cookie
-    clear_auth_cookie()
+    cookie_manager = get_manager()
+    cookie_manager.delete("auth_token")
     
     # Ensure we set authenticated to False
     st.session_state.authenticated = False
     
-    # Rerun the app to show the login form
-    st.rerun()
+    # Use st.experimental_rerun() instead of st.rerun()
+    st.experimental_rerun()
 
 # Function to reset quiz state when a new exam is uploaded
 def reset_quiz_state():
@@ -391,7 +394,8 @@ def main():
         st.session_state.app_mode = "Upload PDF & Generate Questions"
 
     # Check for existing auth token
-    auth_token = get_auth_cookie()
+    cookie_manager = get_manager()
+    auth_token = cookie_manager.get("auth_token")
     if auth_token:
         is_valid, username = verify_jwt_token(auth_token)
         if is_valid:
@@ -407,26 +411,25 @@ def main():
         # Add logout button at the top of the sidebar
         if st.sidebar.button("Logout", key="logout_button"):
             logout()
-            st.rerun()
+        else:
+            # Main app content
+            dotenv.load_dotenv()
+            OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
 
-        # Main app content
-        dotenv.load_dotenv()
-        OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
-
-        app_mode_options = ["Upload PDF & Generate Questions", "Take the Quiz", "Download as PDF"]
-        st.session_state.app_mode = st.sidebar.selectbox(
-            "Choose the app mode", 
-            app_mode_options, 
-            index=app_mode_options.index(st.session_state.app_mode), 
-            key="app_mode_select"
-        )
-        
-        if st.session_state.app_mode == "Upload PDF & Generate Questions":
-            pdf_upload_app()
-        elif st.session_state.app_mode == "Take the Quiz":
-            mc_quiz_app()
-        elif st.session_state.app_mode == "Download as PDF":
-            download_pdf_app()
+            app_mode_options = ["Upload PDF & Generate Questions", "Take the Quiz", "Download as PDF"]
+            st.session_state.app_mode = st.sidebar.selectbox(
+                "Choose the app mode", 
+                app_mode_options, 
+                index=app_mode_options.index(st.session_state.app_mode), 
+                key="app_mode_select"
+            )
+            
+            if st.session_state.app_mode == "Upload PDF & Generate Questions":
+                pdf_upload_app()
+            elif st.session_state.app_mode == "Take the Quiz":
+                mc_quiz_app()
+            elif st.session_state.app_mode == "Download as PDF":
+                download_pdf_app()
 
     else:
         st.warning("Please log in to access the application.")
