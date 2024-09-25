@@ -164,7 +164,7 @@ with login_tab:
             except Exception as e:
                 st.error(f"Login error: {str(e)}")
 
-return client
+    return client
 
 def logout():
     for key in list(st.session_state.keys()):

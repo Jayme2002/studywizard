@@ -175,7 +175,7 @@ with login_tab:
                 except Exception as e:
                     st.error(f"Login error: {str(e)}")
 
-return client
+    return client
 
 # Main app function
 def main():
