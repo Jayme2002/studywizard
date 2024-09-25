@@ -12,6 +12,7 @@ from supabase import Client
 import jwt
 from datetime import datetime, timedelta
 import extra_streamlit_components as stx
+from BEST_PDF_STUDY_APP import Authenticator
 
 
 
