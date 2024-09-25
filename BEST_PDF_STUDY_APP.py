@@ -83,7 +83,7 @@ def login_form(
     password_col: str = "password",
     create_title: str = "Create new account :baby: ",
     login_title: str = "Login to existing account :prince: ",
-    allow_guest: bool = False,
+    allow_guest: bool = False,  
     allow_create: bool = True,
     create_username_label: str = "Create an email username",
     create_username_placeholder: str = None,
@@ -107,16 +107,13 @@ def login_form(
     client = st.connection(name="supabase", type=SupabaseConnection)
     auth = Authenticator()
 
-    # Check for existing auth token
-    auth_token = get_auth_cookie()
-    if auth_token:
-        is_valid, username = verify_jwt_token(auth_token)
-        if is_valid:
-            st.session_state["authenticated"] = True
-            st.session_state["username"] = username
-            return client
+    if "authenticated" not in st.session_state:
+        st.session_state["authenticated"] = False
 
-    if not st.session_state.get("authenticated", False):
+    if "username" not in st.session_state:
+        st.session_state["username"] = None
+
+    if not st.session_state["authenticated"]:
         with st.expander(title, expanded=True):
             if allow_create:
                 create_tab, login_tab = st.tabs([create_title, login_title])
@@ -135,36 +132,37 @@ def login_form(
                                 hashed_password = auth.generate_pwd_hash(password)
                                 try:
                                     client.table(user_tablename).insert({username_col: username, password_col: hashed_password}).execute()
-                                    set_auth_cookie(username)
-                                    st.success(create_success_message)
                                     st.session_state["authenticated"] = True
                                     st.session_state["username"] = username
+                                    set_auth_cookie(username)
+                                    st.success(create_success_message)
                                     st.rerun()
                                 except Exception as e:
                                     st.error(str(e))
-    with login_tab:
-        with st.form(key="login"):
-            username = st.text_input(label=login_username_label, placeholder=login_username_placeholder, help=login_username_help)
-            password = st.text_input(label=login_password_label, placeholder=login_password_placeholder, help=login_password_help, type="password")
-            if st.form_submit_button(label=login_submit_label, type="primary"):
-                try:
-                    response = client.table(user_tablename).select(f"{username_col}, {password_col}").eq(username_col, username).execute()
-                    if response.data:
-                        db_password = response.data[0][password_col]
-                        if auth.verify_password(db_password, password):
-                            set_auth_cookie(username)
-                            st.session_state["authenticated"] = True
-                            st.session_state["username"] = username
-                            st.success(login_success_message)
-                            st.rerun()
-                        else:
-                            st.error(login_error_message)
-                    else:
-                        st.error("User not found")
-                except Exception as e:
-                    st.error(f"Login error: {str(e)}")
 
-        return client
+            with login_tab:
+                with st.form(key="login"):
+                    username = st.text_input(label=login_username_label, placeholder=login_username_placeholder, help=login_username_help)
+                    password = st.text_input(label=login_password_label, placeholder=login_password_placeholder, help=login_password_help, type="password")
+                    if st.form_submit_button(label=login_submit_label, type="primary"):
+                        try:
+                            response = client.table(user_tablename).select(f"{username_col}, {password_col}").eq(username_col, username).execute()
+                            if response.data:
+                                db_password = response.data[0][password_col]
+                                if auth.verify_password(db_password, password):
+                                    st.session_state["authenticated"] = True
+                                    st.session_state["username"] = username
+                                    set_auth_cookie(username)
+                                    st.success(login_success_message)
+                                    st.rerun()
+                                else:
+                                    st.error(login_error_message)
+                            else:
+                                st.error("User not found")
+                        except Exception as e:
+                            st.error(f"Login error: {str(e)}")
+
+    return client
 
 def logout():
     for key in list(st.session_state.keys()):

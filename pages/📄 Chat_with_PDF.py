@@ -110,72 +110,65 @@ def login_form(
     login_error_message: str = "Wrong username/password :x: ",
     email_constraint_fail_message: str = "Please sign up with a valid email address (must contain @).",
 ) -> Client:
-    """Creates a user login form in Streamlit apps with simpler password criteria and email validation."""
-
     client = st.connection(name="supabase", type=SupabaseConnection)
-    auth = argon2.PasswordHasher()
+    auth = Authenticator()
 
-    # Check if the user is already authenticated
     if "authenticated" not in st.session_state:
         st.session_state["authenticated"] = False
 
     if "username" not in st.session_state:
         st.session_state["username"] = None
 
-    # If already authenticated, return early
-    if st.session_state["authenticated"]:
-        return client
+    if not st.session_state["authenticated"]:
+        with st.expander(title, expanded=True):
+            if allow_create:
+                create_tab, login_tab = st.tabs([create_title, login_title])
+            else:
+                login_tab = st.container()
 
-    with st.expander(title, expanded=True):
-        if allow_create:
-            create_tab, login_tab = st.tabs([create_title, login_title])
-        else:
-            login_tab = st.container()
-
-        if allow_create:
-            with create_tab:
-                with st.form(key="create"):
-                    username = st.text_input(label=create_username_label, placeholder=create_username_placeholder, help=create_username_help)
-                    password = st.text_input(label=create_password_label, placeholder=create_password_placeholder, help=create_password_help, type="password")
-                    hashed_password = auth.hash(password)
-                    if st.form_submit_button(label=create_submit_label, type="primary"):
-                        if "@" not in username:
-                            st.error(email_constraint_fail_message)
-                            st.stop()
-
-                        try:
-                            client.table(user_tablename).insert({username_col: username, password_col: hashed_password}).execute()
-                        except Exception as e:
-                            st.error(e.message)
-                        else:
-                            st.session_state["authenticated"] = True
-                            st.session_state["username"] = username
-                            st.success(create_success_message)
-                            st.experimental_rerun()
-
-    with login_tab:
-        with st.form(key="login"):
-            username = st.text_input(label=login_username_label, placeholder=login_username_placeholder, help=login_username_help)
-                password = st.text_input(label=login_password_label, placeholder=login_password_placeholder, help=login_password_help, type="password")
-                if st.form_submit_button(label=login_submit_label, type="primary"):
-                    try:
-                        response = client.table(user_tablename).select(f"{username_col}, {password_col}").eq(username_col, username).execute()
-                        if response.data:
-                            db_password = response.data[0][password_col]
-                            if auth.verify_password(db_password, password):
-                                set_auth_cookie(username)
-                                st.session_state["authenticated"] = True
-                                st.session_state["username"] = username
-                                st.success(login_success_message)
-                                st.rerun()
+            if allow_create:
+                with create_tab:
+                    with st.form(key="create"):
+                        username = st.text_input(label=create_username_label, placeholder=create_username_placeholder, help=create_username_help)
+                        password = st.text_input(label=create_password_label, placeholder=create_password_placeholder, help=create_password_help, type="password")
+                        if st.form_submit_button(label=create_submit_label, type="primary"):
+                            if "@" not in username:
+                                st.error(email_constraint_fail_message)
                             else:
-                                st.error(login_error_message)
-                        else:
-                            st.error("User not found")
-                    except Exception as e:
-                        st.error(f"Login error: {str(e)}")
+                                hashed_password = auth.generate_pwd_hash(password)
+                                try:
+                                    client.table(user_tablename).insert({username_col: username, password_col: hashed_password}).execute()
+                                    st.session_state["authenticated"] = True
+                                    st.session_state["username"] = username
+                                    set_auth_cookie(username)
+                                    st.success(create_success_message)
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(str(e))
 
-        return client
+            with login_tab:
+                with st.form(key="login"):
+                    username = st.text_input(label=login_username_label, placeholder=login_username_placeholder, help=login_username_help)
+                    password = st.text_input(label=login_password_label, placeholder=login_password_placeholder, help=login_password_help, type="password")
+                    if st.form_submit_button(label=login_submit_label, type="primary"):
+                        try:
+                            response = client.table(user_tablename).select(f"{username_col}, {password_col}").eq(username_col, username).execute()
+                            if response.data:
+                                db_password = response.data[0][password_col]
+                                if auth.verify_password(db_password, password):
+                                    st.session_state["authenticated"] = True
+                                    st.session_state["username"] = username
+                                    set_auth_cookie(username)
+                                    st.success(login_success_message)
+                                    st.rerun()
+                                else:
+                                    st.error(login_error_message)
+                            else:
+                                st.error("User not found")
+                        except Exception as e:
+                            st.error(f"Login error: {str(e)}")
+
+    return client
 
 # Main app function
 def main():
@@ -183,7 +176,7 @@ def main():
         st.session_state.authenticated = False
 
     if not st.session_state.authenticated:
-        client = login_form()
+        login_form()
     
     if st.session_state.authenticated:
         st.sidebar.title("Chat with PDF")
