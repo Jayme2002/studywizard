@@ -158,7 +158,7 @@ def login_form(
                                     st.session_state["username"] = username
                                     set_auth_cookie(username)
                                     st.success(login_success_message)
-                                    return  # Exit the function after successful login
+                                    st.rerun()  # Rerun the app after successful login
                                 else:
                                     st.error(login_error_message)
                             else:
@@ -355,8 +355,6 @@ def main():
 
     if not st.session_state.authenticated:
         login_form()
-        if st.session_state.authenticated:
-            st.rerun()
     
     if st.session_state.authenticated:
         st.sidebar.title("SmartExam Creator")
