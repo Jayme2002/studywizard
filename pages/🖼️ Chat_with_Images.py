@@ -166,7 +166,7 @@ def login_form(
                             else:
                                 st.error("User not found")
                         except Exception as e:
-                            st.error(f"Login error: {str(e)}")
+                            
 
     return client
 

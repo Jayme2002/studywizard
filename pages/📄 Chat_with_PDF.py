@@ -154,26 +154,28 @@ def login_form(
                             st.experimental_rerun()
 
         with login_tab:
-            with st.form(key="login"):
-                username = st.text_input(label=login_username_label, placeholder=login_username_placeholder, help=login_username_help)
-                password = st.text_input(label=login_password_label, placeholder=login_password_placeholder, help=login_password_help, type="password")
-
-                if st.form_submit_button(label=login_submit_label, type="primary"):
-                    response = client.table(user_tablename).select(f"{username_col}, {password_col}").eq(username_col, username).execute()
-
-                    if len(response.data) > 0:
-                        db_password = response.data[0]["password"]
-                        if auth.verify(db_password, password):
-                            st.session_state["authenticated"] = True
-                            st.session_state["username"] = username
-                            st.success(login_success_message)
-                            st.experimental_rerun()
-                        else:
-                            st.error(login_error_message)
+    with st.form(key="login"):
+        username = st.text_input(label=login_username_label, placeholder=login_username_placeholder, help=login_username_help)
+        password = st.text_input(label=login_password_label, placeholder=login_password_placeholder, help=login_password_help, type="password")
+        if st.form_submit_button(label=login_submit_label, type="primary"):
+            try:
+                response = client.table(user_tablename).select(f"{username_col}, {password_col}").eq(username_col, username).execute()
+                if response.data:
+                    db_password = response.data[0][password_col]
+                    if auth.verify_password(db_password, password):
+                        set_auth_cookie(username)
+                        st.session_state["authenticated"] = True
+                        st.session_state["username"] = username
+                        st.success(login_success_message)
+                        st.rerun()
                     else:
                         st.error(login_error_message)
+                else:
+                    st.error("User not found")
+            except Exception as e:
+                st.error(f"Login error: {str(e)}")
 
-    return client
+return client
 
 # Main app function
 def main():
