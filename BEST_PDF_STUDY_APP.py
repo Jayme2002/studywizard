@@ -334,8 +334,11 @@ def main():
         st.session_state.authenticated = False
             
 
+    if "app_mode" not in st.session_state:
+        st.session_state.app_mode = "Upload PDF & Generate Questions"
+
     if not st.session_state.authenticated:
-        client = login_form()
+        login_form()
     
     if st.session_state.authenticated:
         st.sidebar.title("SmartExam Creator")
