@@ -342,6 +342,9 @@ def main():
     if "authenticated" not in st.session_state:
         st.session_state.authenticated = False
 
+    if "app_mode" not in st.session_state:
+        st.session_state.app_mode = "Upload PDF & Generate Questions"
+
     # Check for existing auth token
     auth_token = get_auth_cookie()
     if auth_token:
@@ -352,13 +355,17 @@ def main():
 
     if not st.session_state.authenticated:
         login_form()
-    else:
+        if st.session_state.authenticated:
+            st.rerun()
+    
+    if st.session_state.authenticated:
         st.sidebar.title("SmartExam Creator")
         
         # Add logout button at the top of the sidebar
         if st.sidebar.button("Logout", key="logout_button"):
             logout()
-        
+            st.rerun()
+
         # Main app content
         dotenv.load_dotenv()
         OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
@@ -367,7 +374,7 @@ def main():
         st.session_state.app_mode = st.sidebar.selectbox(
             "Choose the app mode", 
             app_mode_options, 
-            index=app_mode_options.index(st.session_state.get("app_mode", "Upload PDF & Generate Questions")), 
+            index=app_mode_options.index(st.session_state.app_mode), 
             key="app_mode_select"
         )
         
@@ -392,137 +399,8 @@ def main():
         elif st.session_state.app_mode == "Download as PDF":
             download_pdf_app()
 
-    else:
+    if not st.session_state.authenticated:
         st.warning("Please log in to access the application.")
-
-def pdf_upload_app():
-    st.title("Upload Your Lecture - Create Your Test Exam")
-    st.subheader("Show Us the Slides and We do the Rest")
-
-    # Reset session state when uploading a new PDF
-    if 'messages' not in st.session_state:
-        st.session_state.messages = []
-    
-    uploaded_pdf = st.file_uploader("Upload a PDF document", type=["pdf"])
-    if uploaded_pdf:
-        reset_quiz_state()  # Reset session state when a new PDF is uploaded
-        pdf_text = extract_text_from_pdf(uploaded_pdf)
-        st.success("PDF content extracted successfully.")
-
-        if pdf_text:
-            st.info("Generating the exam from the uploaded content. This may take a few minutes...")
-            questions = generate_mc_questions(pdf_text)
-            if questions and isinstance(questions, list):
-                # Initialize session state for the new quiz
-                st.session_state.generated_questions = questions
-                st.session_state.answers = [None] * len(questions)
-                st.session_state.feedback = [None] * len(questions)
-                st.session_state.correct_answers = 0
-                st.session_state.mc_test_generated = True
-                st.success("The exam has been successfully created! Switching to the quiz mode...")
-
-                # Automatically switch to "Take the Quiz" mode and rerun
-                st.session_state.app_mode = "Take the Quiz"
-                st.rerun()
-            else:
-                st.error("Failed to generate valid questions. Please try uploading the PDF again.")
-        else:
-            st.error("Failed to extract text from the PDF. Please ensure the PDF contains extractable text.")
-    else:
-        st.warning("Please upload a PDF to generate the interactive exam.")
-
-def mc_quiz_app():
-    st.title('Multiple Choice Quiz')
-
-    # Initialize session state variables
-    if 'quiz_submitted' not in st.session_state:
-        st.session_state.quiz_submitted = False
-    if 'answers' not in st.session_state:
-        st.session_state.answers = []
-    if 'feedback' not in st.session_state:
-        st.session_state.feedback = []
-    if 'correct_answers' not in st.session_state:
-        st.session_state.correct_answers = 0
-
-    questions = st.session_state.generated_questions
-
-    if questions and isinstance(questions, list):
-        # Ensure answers and feedback lists match the number of questions
-        if len(st.session_state.answers) != len(questions):
-            st.session_state.answers = [None] * len(questions)
-        if len(st.session_state.feedback) != len(questions):
-            st.session_state.feedback = [None] * len(questions)
-
-        if not st.session_state.quiz_submitted:
-            st.subheader('Select your answers for all questions, then submit to see your results')
-            for i, quiz_data in enumerate(questions):
-                if isinstance(quiz_data, dict) and 'question' in quiz_data:
-                    st.markdown(f"### Question {i+1}: {quiz_data['question']}")
-                    user_choice = st.radio("Choose an answer:", quiz_data['choices'], key=f"user_choice_{i}")
-                    st.session_state.answers[i] = user_choice
-
-            if st.button("Submit Quiz"):
-                st.session_state.quiz_submitted = True
-                st.session_state.correct_answers = 0
-                for i, (answer, quiz_data) in enumerate(zip(st.session_state.answers, questions)):
-                    if answer == quiz_data['correct_answer']:
-                        st.session_state.feedback[i] = ("Correct", quiz_data.get('explanation', 'No explanation available'))
-                        st.session_state.correct_answers += 1
-                    else:
-                        st.session_state.feedback[i] = ("Incorrect", quiz_data.get('explanation', 'No explanation available'), quiz_data['correct_answer'])
-                st.rerun()
-
-        else:
-            st.markdown("## Quiz Results")
-            for i, (quiz_data, feedback) in enumerate(zip(questions, st.session_state.feedback)):
-                st.markdown(f"### Question {i+1}: {quiz_data['question']}")
-                if feedback[0] == "Correct":
-                    st.success(f"{feedback[0]}")
-                else:
-                    st.error(f"{feedback[0]} - Correct answer: {feedback[2]}")
-                st.markdown(f"**Your answer:** {st.session_state.answers[i]}")
-                st.markdown(f"**Explanation:** {feedback[1]}")
-                st.markdown("---")
-
-            score = st.session_state.correct_answers
-            total_questions = len(questions)
-            st.markdown(f"""
-                <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px;">
-                    <h1 style="font-size: 3em; color: gold;">🏆</h1>
-                    <h1>Your Score: {score}/{total_questions}</h1>
-                </div>
-            """, unsafe_allow_html=True)
-
-            if st.button("Retake Quiz"):
-                st.session_state.answers = [None] * len(questions)
-                st.session_state.feedback = [None] * len(questions)
-                st.session_state.correct_answers = 0
-                st.session_state.quiz_submitted = False
-                st.rerun()
-    else:
-        st.error("No valid questions found. Please generate the exam again.")
-
-def download_pdf_app():
-    st.title('Download Your Exam as PDF')
-
-    questions = st.session_state.generated_questions
-
-    if questions:
-        for i, q in enumerate(questions):
-            st.markdown(f"### Q{i+1}: {q['question']}")
-            for choice in q['choices']:
-                st.write(choice)
-            st.write(f"**Correct answer:** {q['correct_answer']}")
-            st.write(f"**Explanation:** {q['explanation']}")
-            st.write("---")
-
-        pdf_bytes = generate_pdf(questions)
-        st.download_button(
-            label="Download PDF",
-            data=pdf_bytes,
-            file_name="generated_exam.pdf",
-            mime="application/pdf"
-        )
 
 if __name__ == "__main__":
     main()
