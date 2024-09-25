@@ -73,6 +73,7 @@ def get_auth_cookie():
     return cookie_manager.get("auth_token")
 
 def clear_auth_cookie():
+    cookie_manager = get_manager()
     cookie_manager.delete("auth_token")
 
 def login_form(
@@ -168,9 +169,17 @@ def login_form(
     return client
 
 def logout():
+    # Clear all session state
     for key in list(st.session_state.keys()):
         del st.session_state[key]
+    
+    # Clear the authentication cookie
     clear_auth_cookie()
+    
+    # Ensure we set authenticated to False
+    st.session_state.authenticated = False
+    
+    # Rerun the app to show the login form
     st.rerun()
 
 # Function to reset quiz state when a new exam is uploaded
@@ -333,9 +342,6 @@ def main():
     if "authenticated" not in st.session_state:
         st.session_state.authenticated = False
 
-    if "app_mode" not in st.session_state:
-        st.session_state.app_mode = "Upload PDF & Generate Questions"
-
     # Check for existing auth token
     auth_token = get_auth_cookie()
     if auth_token:
@@ -346,17 +352,13 @@ def main():
 
     if not st.session_state.authenticated:
         login_form()
-        if st.session_state.authenticated:
-            st.rerun()
-    
-    if st.session_state.authenticated:
+    else:
         st.sidebar.title("SmartExam Creator")
         
         # Add logout button at the top of the sidebar
         if st.sidebar.button("Logout", key="logout_button"):
             logout()
-            st.rerun()
-
+        
         # Main app content
         dotenv.load_dotenv()
         OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
@@ -365,7 +367,7 @@ def main():
         st.session_state.app_mode = st.sidebar.selectbox(
             "Choose the app mode", 
             app_mode_options, 
-            index=app_mode_options.index(st.session_state.app_mode), 
+            index=app_mode_options.index(st.session_state.get("app_mode", "Upload PDF & Generate Questions")), 
             key="app_mode_select"
         )
         
