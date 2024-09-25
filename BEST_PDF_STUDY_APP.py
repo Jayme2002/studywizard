@@ -168,10 +168,10 @@ def login_form(
     return client
 
 def logout():
-    st.session_state.authenticated = False
-    st.session_state.username = None
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
     clear_auth_cookie()
-    
+    st.rerun()
 
 # Function to reset quiz state when a new exam is uploaded
 def reset_quiz_state():
@@ -342,7 +342,6 @@ def main():
         # Add logout button at the top of the sidebar
         if st.sidebar.button("Logout", key="logout_button"):
             logout()
-            st.rerun()
 
         # Main app content
         if "app_mode" not in st.session_state:

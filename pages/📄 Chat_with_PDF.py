@@ -7,6 +7,7 @@ import PyPDF2
 import argon2
 from st_supabase_connection import SupabaseConnection
 from supabase import Client
+from BEST_PDF_STUDY_APP import logout
 
 # Page config should be the very first Streamlit command
 st.set_page_config(
@@ -188,7 +189,7 @@ def main():
         # Add logout button at the top of the sidebar
         if st.sidebar.button("Logout", key="logout_button_pdf"):
             logout()
-            st.rerun()
+            
 
         # --- Header ---
         st.title("📝Upload Your Study Material - Ask Unlimited Questions")
